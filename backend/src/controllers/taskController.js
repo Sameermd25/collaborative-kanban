@@ -1,22 +1,67 @@
+
+const mongoose = require("mongoose");
+
 const Task = require("../models/Task");
 const Board = require("../models/Board");
 const Column = require("../models/Column");
 const Membership = require("../models/Membership");
 const recordActivity = require("../services/activity.service");
 
+const isValidId = (id) => mongoose.isValidObjectId(id);
+
+const validateAssignee = async (assigneeId, tenant) => {
+    if (!assigneeId) return true;
+
+    if (!isValidId(assigneeId)) return false;
+
+    const membership = await Membership.findOne({
+        userId: assigneeId,
+        organizationId: tenant.organizationId,
+        tenantId: tenant._id,
+        role: { $in: ["TENANT_ADMIN", "MEMBER"] },
+    });
+
+    return Boolean(membership);
+};
+
+// CREATE TASK
 const createTask = async (req, res, next) => {
     try {
-        const { boardId, columnId } = req.params;
+        const boardId = req.params.boardId || req.body.boardId;
+        const columnId = req.params.columnId || req.body.columnId;
+
         const {
             title,
-            description,
-            priority,
-            assignedTo,
+            description = "",
+            priority = "medium",
+            assigneeId = null,
         } = req.body;
 
         if (!title?.trim()) {
             return res.status(400).json({
+                success: false,
                 message: "Task title is required",
+            });
+        }
+
+        if (!boardId || !columnId) {
+            return res.status(400).json({
+                success: false,
+                message: "Board ID and column ID are required",
+            });
+        }
+
+        if (!isValidId(boardId) || !isValidId(columnId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid board or column ID",
+            });
+        }
+
+        if (!["low", "medium", "high"].includes(priority)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid priority",
             });
         }
 
@@ -27,6 +72,7 @@ const createTask = async (req, res, next) => {
 
         if (!board) {
             return res.status(404).json({
+                success: false,
                 message: "Board not found",
             });
         }
@@ -39,25 +85,21 @@ const createTask = async (req, res, next) => {
 
         if (!column) {
             return res.status(404).json({
+                success: false,
                 message: "Column not found",
             });
         }
 
-        const userIds = [...new Set(assignedTo || [])];
+        const validAssignee = await validateAssignee(
+            assigneeId,
+            req.tenant
+        );
 
-        if (userIds.length) {
-            const memberships = await Membership.find({
-                userId: { $in: userIds },
-                organizationId: req.tenant.organizationId,
-                tenantId: req.tenant._id,
-                role: { $in: ["TENANT_ADMIN", "MEMBER"] },
+        if (!validAssignee) {
+            return res.status(400).json({
+                success: false,
+                message: "Assignee does not belong to this tenant",
             });
-
-            if (memberships.length !== userIds.length) {
-                return res.status(400).json({
-                    message: "One or more assignees do not belong to this tenant",
-                });
-            }
         }
 
         const lastTask = await Task.findOne({
@@ -72,9 +114,9 @@ const createTask = async (req, res, next) => {
             boardId,
             columnId,
             title: title.trim(),
-            description: description || "",
-            priority: priority || "MEDIUM",
-            assignedTo: userIds,
+            description,
+            priority,
+            assigneeId: assigneeId || null,
             position: lastTask ? lastTask.position + 1 : 0,
             createdBy: req.user._id,
         });
@@ -89,23 +131,33 @@ const createTask = async (req, res, next) => {
             },
         });
 
+        const populatedTask = await Task.findById(task._id)
+            .populate("assigneeId", "name email");
+
         req.app.get("io")
             .to(`tenant:${req.tenant._id}`)
-            .emit("task:created", task);
+            .emit("task:created", populatedTask);
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
-            task,
+            task: populatedTask,
         });
     } catch (error) {
         next(error);
     }
 };
 
-
+// GET TASKS
 const getTasks = async (req, res, next) => {
     try {
-        const { boardId } = req.params;
+        const boardId = req.params.boardId || req.query.boardId;
+
+        if (!boardId || !isValidId(boardId)) {
+            return res.status(400).json({
+                success: false,
+                message: "A valid board ID is required",
+            });
+        }
 
         const board = await Board.findOne({
             _id: boardId,
@@ -114,6 +166,7 @@ const getTasks = async (req, res, next) => {
 
         if (!board) {
             return res.status(404).json({
+                success: false,
                 message: "Board not found",
             });
         }
@@ -122,14 +175,10 @@ const getTasks = async (req, res, next) => {
             boardId,
             tenantId: req.tenant._id,
         })
-            .populate("assignedTo", "name email")
+            .populate("assigneeId", "name email")
             .sort({ position: 1 });
 
-
-
-
-
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             tasks,
         });
@@ -138,15 +187,42 @@ const getTasks = async (req, res, next) => {
     }
 };
 
-// Optimistic concurrency using an explicit version
+// UPDATE TASK
 const updateTask = async (req, res, next) => {
     try {
         const { taskId } = req.params;
-        const { version, assignedTo, ...updates } = req.body;
+        const {
+            version,
+            assigneeId,
+            ...updates
+        } = req.body;
 
-        if (!Number.isInteger(version) || version < 0) {
+        if (!isValidId(taskId)) {
             return res.status(400).json({
+                success: false,
+                message: "Invalid task ID",
+            });
+        }
+
+        if (!Number.isInteger(version) || version < 1) {
+            return res.status(400).json({
+                success: false,
                 message: "A valid task version is required",
+            });
+        }
+
+        const existingTask = await Task.findOne({
+            _id: taskId,
+            tenantId: req.tenant._id,
+            ...(req.params.boardId
+                ? { boardId: req.params.boardId }
+                : {}),
+        });
+
+        if (!existingTask) {
+            return res.status(404).json({
+                success: false,
+                message: "Task not found",
             });
         }
 
@@ -169,6 +245,7 @@ const updateTask = async (req, res, next) => {
         if (safeUpdates.title !== undefined) {
             if (!safeUpdates.title.trim()) {
                 return res.status(400).json({
+                    success: false,
                     message: "Task title cannot be empty",
                 });
             }
@@ -178,50 +255,47 @@ const updateTask = async (req, res, next) => {
 
         if (
             safeUpdates.priority !== undefined &&
-            !["LOW", "MEDIUM", "HIGH"].includes(safeUpdates.priority)
+            !["low", "medium", "high"].includes(safeUpdates.priority)
         ) {
             return res.status(400).json({
+                success: false,
                 message: "Invalid priority",
             });
         }
 
-        if (assignedTo !== undefined) {
-            if (
-                !Array.isArray(assignedTo) ||
-                assignedTo.some((id) => !require("mongoose").isValidObjectId(id))
-            ) {
+        if (assigneeId !== undefined) {
+            const validAssignee = await validateAssignee(
+                assigneeId,
+                req.tenant
+            );
+
+            if (!validAssignee) {
                 return res.status(400).json({
-                    message: "Invalid assignee list",
-                });
-            }
-
-            const userIds = [...new Set(assignedTo)];
-
-            const memberships = await Membership.find({
-                userId: { $in: userIds },
-                organizationId: req.tenant.organizationId,
-                tenantId: req.tenant._id,
-                role: { $in: ["TENANT_ADMIN", "MEMBER"] },
-            });
-
-            if (memberships.length !== userIds.length) {
-                return res.status(400).json({
+                    success: false,
                     message: "Invalid tenant assignee",
                 });
             }
 
-            safeUpdates.assignedTo = userIds;
+            safeUpdates.assigneeId = assigneeId || null;
         }
 
         if (safeUpdates.columnId !== undefined) {
+            if (!isValidId(safeUpdates.columnId)) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Invalid column ID",
+                });
+            }
+
             const column = await Column.findOne({
                 _id: safeUpdates.columnId,
-                boardId: req.params.boardId,
+                boardId: existingTask.boardId,
                 tenantId: req.tenant._id,
             });
 
             if (!column) {
                 return res.status(400).json({
+                    success: false,
                     message: "Target column is invalid",
                 });
             }
@@ -230,8 +304,8 @@ const updateTask = async (req, res, next) => {
         const task = await Task.findOneAndUpdate(
             {
                 _id: taskId,
-                boardId: req.params.boardId,
                 tenantId: req.tenant._id,
+                boardId: existingTask.boardId,
                 version,
             },
             {
@@ -242,7 +316,7 @@ const updateTask = async (req, res, next) => {
                 new: true,
                 runValidators: true,
             }
-        );
+        ).populate("assigneeId", "name email");
 
         if (!task) {
             return res.status(409).json({
@@ -265,7 +339,7 @@ const updateTask = async (req, res, next) => {
             .to(`tenant:${req.tenant._id}`)
             .emit("task:updated", task);
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             task,
         });
@@ -274,16 +348,20 @@ const updateTask = async (req, res, next) => {
     }
 };
 
+// DELETE TASK
 const deleteTask = async (req, res, next) => {
     try {
         const task = await Task.findOneAndDelete({
             _id: req.params.taskId,
-            boardId: req.params.boardId,
+            ...(req.params.boardId
+                ? { boardId: req.params.boardId }
+                : {}),
             tenantId: req.tenant._id,
         });
 
         if (!task) {
             return res.status(404).json({
+                success: false,
                 message: "Task not found",
             });
         }
@@ -305,7 +383,7 @@ const deleteTask = async (req, res, next) => {
                 boardId: task.boardId,
             });
 
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             message: "Task deleted successfully",
         });

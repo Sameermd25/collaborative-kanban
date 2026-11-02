@@ -2,7 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 
-import { logout, setActiveTenant } from "../auth/authSlice";
+import {
+    logout,
+    setActiveTenant,
+    createTenant,
+} from "../auth/authSlice";
 
 import {
     createBoard,
@@ -27,11 +31,9 @@ import { createSocketConnection } from "../../services/socket";
 export default function Dashboard() {
     const dispatch = useDispatch();
 
-    const {
-        user,
-        activeTenantId,
-        memberships = [],
-    } = useSelector((state) => state.auth);
+    const { user, activeTenantId, memberships = [] } = useSelector(
+        (state) => state.auth
+    );
 
     const { mode } = useSelector((state) => state.theme);
 
@@ -56,10 +58,17 @@ export default function Dashboard() {
     }, [activeBoard]);
 
     const [activeView, setActiveView] = useState("dashboard");
+
     const [showBoardForm, setShowBoardForm] = useState(false);
     const [showTaskForm, setShowTaskForm] = useState(false);
+    const [showWorkspaceModal, setShowWorkspaceModal] = useState(false);
+
     const [editingTask, setEditingTask] = useState(null);
     const [selectedTask, setSelectedTask] = useState(null);
+
+    const [workspaceName, setWorkspaceName] = useState("");
+    const [workspaceError, setWorkspaceError] = useState("");
+    const [creatingWorkspace, setCreatingWorkspace] = useState(false);
 
     const [boardForm, setBoardForm] = useState({
         name: "",
@@ -76,8 +85,10 @@ export default function Dashboard() {
 
     const [onlineUsers, setOnlineUsers] = useState([]);
     const [socketStatus, setSocketStatus] = useState("connecting");
+
     const [draggedTaskId, setDraggedTaskId] = useState(null);
     const [dragOverColumnId, setDragOverColumnId] = useState(null);
+
     const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
 
     const getId = (value) =>
@@ -94,10 +105,7 @@ export default function Dashboard() {
             const organization = membership.organizationId;
 
             if (organization && typeof organization === "object") {
-                uniqueOrganizations.set(
-                    getId(organization),
-                    organization
-                );
+                uniqueOrganizations.set(getId(organization), organization);
             }
         });
 
@@ -106,8 +114,7 @@ export default function Dashboard() {
 
     const activeMembership = memberships.find(
         (membership) =>
-            String(getId(membership.tenantId)) ===
-            String(activeTenantId)
+            String(getId(membership.tenantId)) === String(activeTenantId)
     );
 
     const currentOrganizationId = activeMembership
@@ -117,9 +124,12 @@ export default function Dashboard() {
     const availableTenants = memberships.filter(
         (membership) =>
             String(getId(membership.organizationId)) ===
-                String(currentOrganizationId) &&
+            String(currentOrganizationId) &&
             membership.isActive
     );
+
+    const canCreateWorkspace =
+        activeMembership?.role === "org_admin";
 
     useEffect(() => {
         if (currentOrganizationId) {
@@ -135,7 +145,7 @@ export default function Dashboard() {
         const firstTenant = memberships.find(
             (membership) =>
                 String(getId(membership.organizationId)) ===
-                    String(organizationId) &&
+                String(organizationId) &&
                 membership.isActive
         );
 
@@ -147,6 +157,71 @@ export default function Dashboard() {
     const handleTenantChange = (tenantId) => {
         dispatch(setActiveTenant(tenantId));
     };
+
+    // --------------------------------------------------
+    // CREATE WORKSPACE
+    // --------------------------------------------------
+
+    async function handleCreateWorkspace(event) {
+        event.preventDefault();
+
+        const name = workspaceName.trim();
+
+        if (!name) {
+            setWorkspaceError("Please enter a workspace name.");
+            return;
+        }
+
+        if (!currentOrganizationId) {
+            setWorkspaceError("Please select an organization.");
+            return;
+        }
+
+        if (!canCreateWorkspace) {
+            setWorkspaceError(
+                "Only organization admins can create workspaces."
+            );
+            return;
+        }
+
+        try {
+            setCreatingWorkspace(true);
+            setWorkspaceError("");
+
+            await dispatch(
+                createTenant({
+                    organizationId: currentOrganizationId,
+                    name,
+                })
+            ).unwrap();
+
+            setWorkspaceName("");
+            setShowWorkspaceModal(false);
+
+        } catch (err) {
+            setWorkspaceError(
+                typeof err === "string"
+                    ? err
+                    : "Unable to create workspace. Please try again."
+            );
+        } finally {
+            setCreatingWorkspace(false);
+        }
+    }
+
+    function openWorkspaceModal() {
+        setWorkspaceName("");
+        setWorkspaceError("");
+        setShowWorkspaceModal(true);
+    }
+
+    function closeWorkspaceModal() {
+        if (creatingWorkspace) return;
+
+        setShowWorkspaceModal(false);
+        setWorkspaceName("");
+        setWorkspaceError("");
+    }
 
     // --------------------------------------------------
     // THEME
@@ -188,8 +263,7 @@ export default function Dashboard() {
                 ...previous,
                 columnId: columns.some(
                     (column) =>
-                        String(column._id) ===
-                        String(previous.columnId)
+                        String(column._id) === String(previous.columnId)
                 )
                     ? previous.columnId
                     : columns[0]._id,
@@ -296,12 +370,10 @@ export default function Dashboard() {
 
     const completedCount = useMemo(() => {
         return tasks.filter((task) => {
-            const columnId =
-                task.columnId?._id || task.columnId;
+            const columnId = task.columnId?._id || task.columnId;
 
             const column = columns.find(
-                (col) =>
-                    String(col._id) === String(columnId)
+                (col) => String(col._id) === String(columnId)
             );
 
             return column?.name?.toLowerCase().includes("done");
@@ -310,12 +382,10 @@ export default function Dashboard() {
 
     const inProgressCount = useMemo(() => {
         return tasks.filter((task) => {
-            const columnId =
-                task.columnId?._id || task.columnId;
+            const columnId = task.columnId?._id || task.columnId;
 
             const column = columns.find(
-                (col) =>
-                    String(col._id) === String(columnId)
+                (col) => String(col._id) === String(columnId)
             );
 
             return column?.name?.toLowerCase().includes("progress");
@@ -335,9 +405,7 @@ export default function Dashboard() {
     // --------------------------------------------------
 
     const myTasks = useMemo(() => {
-        const currentUserId = String(
-            user?._id || user?.id || ""
-        );
+        const currentUserId = String(user?._id || user?.id || "");
 
         if (!currentUserId) return [];
 
@@ -350,6 +418,34 @@ export default function Dashboard() {
             return String(assigneeId || "") === currentUserId;
         });
     }, [tasks, user]);
+
+    // useEffect(() => {
+    //     console.log("CURRENT USER:", user);
+    //     console.log("CURRENT USER ID:", user?._id || user?.id);
+    //     console.log("ALL TASKS:", tasks);
+
+    //     console.table(
+    //         tasks.map((task) => ({
+    //             title: task.title,
+    //             assigneeId:
+    //                 task.assigneeId?._id ||
+    //                 task.assigneeId?.id ||
+    //                 task.assigneeId ||
+    //                 "UNASSIGNED",
+    //             columnId: task.columnId?._id || task.columnId
+    //         }))
+    //     );
+
+    //     console.log("MY TASKS:", myTasks);
+    // }, [user, tasks, myTasks]);
+
+    // useEffect(() => {
+    //     console.log("Logged-in user:", user);
+    //     console.log("All board tasks:", tasks);
+    //     console.log("Filtered my tasks:", myTasks);
+    //     console.log("WORKSPACE MEMBERS:", members);
+    //     console.log("MEMBER DETAILS:", JSON.stringify(members, null, 2));
+    // }, [user, tasks, myTasks, members]);
 
     // --------------------------------------------------
     // CREATE BOARD
@@ -406,9 +502,6 @@ export default function Dashboard() {
                 columnId: "",
                 assigneeId: "",
             });
-
-            // The createTask fulfilled reducer adds the task.
-            // Refreshing is not needed here.
         }
     }
 
@@ -444,9 +537,6 @@ export default function Dashboard() {
                 columnId: "",
                 assigneeId: "",
             });
-
-            // updateTask.fulfilled updates Redux state.
-            // Do not fetch board details here, as that can clear history.
         }
     }
 
@@ -465,8 +555,6 @@ export default function Dashboard() {
 
         if (deleteTask.fulfilled.match(result)) {
             setSelectedTask(null);
-
-            // deleteTask.fulfilled removes the task from Redux state.
         }
     }
 
@@ -475,13 +563,9 @@ export default function Dashboard() {
     // --------------------------------------------------
 
     async function handleMove(task, targetColumnId) {
-        const currentColumnId =
-            task.columnId?._id || task.columnId;
+        const currentColumnId = task.columnId?._id || task.columnId;
 
-        if (
-            String(currentColumnId) ===
-            String(targetColumnId)
-        ) {
+        if (String(currentColumnId) === String(targetColumnId)) {
             return;
         }
 
@@ -493,9 +577,8 @@ export default function Dashboard() {
             })
         );
 
-        if (moveTask.fulfilled.match(result)) {
-            // moveTask.fulfilled updates Redux state.
-            // Do not fetch board details here, as that can clear history.
+        if (moveTask.rejected.match(result)) {
+            console.error("Move task failed:", result.payload);
         }
     }
 
@@ -512,9 +595,15 @@ export default function Dashboard() {
 
     function handleDragOver(event, columnId) {
         event.preventDefault();
-
         event.dataTransfer.dropEffect = "move";
-        setDragOverColumnId(columnId);
+
+        setDragOverColumnId((currentColumnId) => {
+            if (String(currentColumnId) === String(columnId)) {
+                return currentColumnId;
+            }
+
+            return columnId;
+        });
     }
 
     async function handleDrop(event, columnId) {
@@ -524,8 +613,7 @@ export default function Dashboard() {
 
         const task = tasks.find(
             (item) =>
-                String(item._id) ===
-                String(taskId || draggedTaskId)
+                String(item._id) === String(taskId || draggedTaskId)
         );
 
         setDraggedTaskId(null);
@@ -545,14 +633,14 @@ export default function Dashboard() {
     // TASK MODALS
     // --------------------------------------------------
 
-    function openTaskModal() {
+    function openTaskModal(columnId = "") {
         setEditingTask(null);
 
         setTaskForm({
             title: "",
             description: "",
             priority: "medium",
-            columnId: columns[0]?._id || "",
+            columnId: columnId || columns[0]?._id || "",
             assigneeId: "",
         });
 
@@ -584,14 +672,12 @@ export default function Dashboard() {
     // --------------------------------------------------
 
     function renderTaskCard(task) {
-        const currentColumnId =
-            task.columnId?._id || task.columnId;
+        const currentColumnId = task.columnId?._id || task.columnId;
 
         return (
             <article
-                className={`task-card ${
-                    draggedTaskId === task._id ? "dragging" : ""
-                }`}
+                className={`task-card ${draggedTaskId === task._id ? "dragging" : ""
+                    }`}
                 key={task._id}
                 draggable
                 onClick={() => {
@@ -599,9 +685,7 @@ export default function Dashboard() {
                         setSelectedTask(task);
                     }
                 }}
-                onDragStart={(event) =>
-                    handleDragStart(event, task)
-                }
+                onDragStart={(event) => handleDragStart(event, task)}
                 onDragEnd={handleDragEnd}
             >
                 <div className="task-card-top">
@@ -642,9 +726,7 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {task.description && (
-                    <p>{task.description}</p>
-                )}
+                {task.description && <p>{task.description}</p>}
 
                 <div className="task-meta">
                     <span>
@@ -653,38 +735,27 @@ export default function Dashboard() {
 
                     <span>
                         {task.dueDate
-                            ? new Date(
-                                  task.dueDate
-                              ).toLocaleDateString()
+                            ? new Date(task.dueDate).toLocaleDateString()
                             : ""}
                     </span>
                 </div>
 
                 <label
                     className="move-label"
-                    onClick={(event) =>
-                        event.stopPropagation()
-                    }
+                    onClick={(event) => event.stopPropagation()}
                 >
                     Move to
 
                     <select
                         value={String(currentColumnId || "")}
-                        onClick={(event) =>
-                            event.stopPropagation()
-                        }
+                        onClick={(event) => event.stopPropagation()}
                         onChange={(event) =>
                             handleMove(task, event.target.value)
                         }
                     >
                         {columns.map((column) => (
-                            <option
-                                key={column._id}
-                                value={column._id}
-                            >
-                                {column.name ||
-                                    column.title ||
-                                    "Untitled column"}
+                            <option key={column._id} value={column._id}>
+                                {column.name || column.title || "Untitled column"}
                             </option>
                         ))}
                     </select>
@@ -711,9 +782,8 @@ export default function Dashboard() {
 
                 <button
                     type="button"
-                    className={`side-link ${
-                        activeView === "dashboard" ? "selected" : ""
-                    }`}
+                    className={`side-link ${activeView === "dashboard" ? "selected" : ""
+                        }`}
                     onClick={() => setActiveView("dashboard")}
                 >
                     ▦ <span>Dashboard</span>
@@ -721,9 +791,8 @@ export default function Dashboard() {
 
                 <button
                     type="button"
-                    className={`side-link ${
-                        activeView === "myTasks" ? "selected" : ""
-                    }`}
+                    className={`side-link ${activeView === "myTasks" ? "selected" : ""
+                        }`}
                     onClick={() => setActiveView("myTasks")}
                 >
                     ▤ <span>My Tasks</span>
@@ -731,9 +800,8 @@ export default function Dashboard() {
 
                 <button
                     type="button"
-                    className={`side-link ${
-                        activeView === "activity" ? "selected" : ""
-                    }`}
+                    className={`side-link ${activeView === "activity" ? "selected" : ""
+                        }`}
                     onClick={() => setActiveView("activity")}
                 >
                     ◷ <span>Activity</span>
@@ -759,29 +827,28 @@ export default function Dashboard() {
                             {activeView === "dashboard"
                                 ? "Boards"
                                 : activeView === "myTasks"
-                                ? "My Tasks"
-                                : "Activity"}
+                                    ? "My Tasks"
+                                    : "Activity"}
                         </p>
 
                         <h2>
                             {activeView === "dashboard"
                                 ? "Dashboard"
                                 : activeView === "myTasks"
-                                ? "My Tasks"
-                                : "Activity"}
+                                    ? "My Tasks"
+                                    : "Activity"}
                         </h2>
                     </div>
 
                     <div className="topbar-right">
                         <ThemeToggle compact />
+
                         <div className="workspace-switchers">
                             <select
                                 className="workspace-select"
                                 value={selectedOrganizationId}
                                 onChange={(event) =>
-                                    handleOrganizationChange(
-                                        event.target.value
-                                    )
+                                    handleOrganizationChange(event.target.value)
                                 }
                                 aria-label="Select organization"
                                 disabled={organizations.length <= 1}
@@ -800,9 +867,7 @@ export default function Dashboard() {
                                 className="workspace-select"
                                 value={activeTenantId || ""}
                                 onChange={(event) =>
-                                    handleTenantChange(
-                                        event.target.value
-                                    )
+                                    handleTenantChange(event.target.value)
                                 }
                                 aria-label="Select workspace"
                                 disabled={availableTenants.length <= 1}
@@ -812,20 +877,28 @@ export default function Dashboard() {
                                         key={getId(membership.tenantId)}
                                         value={getId(membership.tenantId)}
                                     >
-                                        {membership.tenantId?.name ||
-                                            "Workspace"}
+                                        {membership.tenantId?.name || "Workspace"}
                                     </option>
                                 ))}
                             </select>
+
+                            {canCreateWorkspace && (
+                                <button
+                                    type="button"
+                                    className="secondary-button create-workspace-button"
+                                    onClick={openWorkspaceModal}
+                                >
+                                    + Create Workspace
+                                </button>
+                            )}
                         </div>
 
                         <div className="online-status">
                             <span
-                                className={`status-dot ${
-                                    socketStatus === "connected"
-                                        ? "online"
-                                        : "offline"
-                                }`}
+                                className={`status-dot ${socketStatus === "connected"
+                                    ? "online"
+                                    : "offline"
+                                    }`}
                             />
 
                             {socketStatus === "connected"
@@ -840,24 +913,22 @@ export default function Dashboard() {
                                     .toUpperCase()}
                             </span>
 
-                            <span>
-                                {user?.name || user?.email || "User"}
-                            </span>
+                            <span>{user?.name || user?.email || "User"}</span>
                         </div>
                     </div>
                 </header>
 
-                {error && (
-                    <div className="alert error">{error}</div>
-                )}
+                {error && <div className="alert error">{error}</div>}
 
-                {loading && (
+                {/* Keep the dashboard mounted during background fetches. */}
+
+                {loading && !activeBoard && boards.length === 0 && (
                     <div className="loading-line">
                         Loading workspace...
                     </div>
                 )}
 
-                {!loading && (
+                {(!loading || Boolean(activeBoard)) && (
                     <>
                         {/* DASHBOARD VIEW */}
 
@@ -865,9 +936,7 @@ export default function Dashboard() {
                             <>
                                 <section className="welcome-row">
                                     <div>
-                                        <p className="eyebrow">
-                                            YOUR WORKSPACE
-                                        </p>
+                                        <p className="eyebrow">YOUR WORKSPACE</p>
 
                                         <h1>
                                             Welcome back
@@ -886,9 +955,7 @@ export default function Dashboard() {
                                     <div className="welcome-actions">
                                         <button
                                             className="secondary-button"
-                                            onClick={() =>
-                                                setShowBoardForm(true)
-                                            }
+                                            onClick={() => setShowBoardForm(true)}
                                         >
                                             ＋ New board
                                         </button>
@@ -896,10 +963,9 @@ export default function Dashboard() {
                                         <button
                                             className="primary-button compact"
                                             disabled={
-                                                !activeBoard ||
-                                                columns.length === 0
+                                                !activeBoard || columns.length === 0
                                             }
-                                            onClick={openTaskModal}
+                                            onClick={() => openTaskModal()}
                                         >
                                             ＋ Add task
                                         </button>
@@ -935,13 +1001,10 @@ export default function Dashboard() {
                                 <section className="board-panel">
                                     <div className="board-toolbar">
                                         <div>
-                                            <p className="eyebrow">
-                                                PROJECT BOARD
-                                            </p>
+                                            <p className="eyebrow">PROJECT BOARD</p>
 
                                             <h2>
-                                                {activeBoard?.name ||
-                                                    "Your boards"}
+                                                {activeBoard?.name || "Your boards"}
                                             </h2>
 
                                             <p className="muted">
@@ -951,16 +1014,11 @@ export default function Dashboard() {
                                         </div>
 
                                         <div className="board-toolbar-actions">
-                                            {/* UNDO / REDO BUTTONS */}
-
                                             <button
                                                 type="button"
                                                 className="secondary-button"
                                                 onClick={handleUndo}
-                                                disabled={
-                                                    !canUndo ||
-                                                    mutationLoading
-                                                }
+                                                disabled={!canUndo || mutationLoading}
                                                 title="Undo last task change"
                                             >
                                                 ↶ Undo
@@ -970,10 +1028,7 @@ export default function Dashboard() {
                                                 type="button"
                                                 className="secondary-button"
                                                 onClick={handleRedo}
-                                                disabled={
-                                                    !canRedo ||
-                                                    mutationLoading
-                                                }
+                                                disabled={!canRedo || mutationLoading}
                                                 title="Redo last undone task change"
                                             >
                                                 ↷ Redo
@@ -982,9 +1037,7 @@ export default function Dashboard() {
                                             {boards.length > 0 && (
                                                 <select
                                                     className="board-select"
-                                                    value={
-                                                        activeBoard?._id || ""
-                                                    }
+                                                    value={activeBoard?._id || ""}
                                                     onChange={(event) =>
                                                         dispatch(
                                                             fetchBoardDetails(
@@ -1017,9 +1070,7 @@ export default function Dashboard() {
 
                                             <button
                                                 className="primary-button compact"
-                                                onClick={() =>
-                                                    setShowBoardForm(true)
-                                                }
+                                                onClick={() => setShowBoardForm(true)}
                                             >
                                                 Create board
                                             </button>
@@ -1035,92 +1086,98 @@ export default function Dashboard() {
                                         </div>
                                     ) : (
                                         <div className="kanban-grid">
-                                            {columns.map((column) => (
-                                                <section
-                                                    className={`kanban-column ${
-                                                        String(
-                                                            dragOverColumnId
-                                                        ) ===
-                                                        String(column._id)
+                                            {columns.map((column) => {
+                                                const columnTasks = tasksInColumn(
+                                                    column._id
+                                                );
+
+                                                return (
+                                                    <section
+                                                        className={`kanban-column ${String(dragOverColumnId) ===
+                                                            String(column._id)
                                                             ? "drag-over"
                                                             : ""
-                                                    }`}
-                                                    key={column._id}
-                                                    onDragOver={(event) =>
-                                                        handleDragOver(
-                                                            event,
-                                                            column._id
-                                                        )
-                                                    }
-                                                    onDrop={(event) =>
-                                                        handleDrop(
-                                                            event,
-                                                            column._id
-                                                        )
-                                                    }
-                                                    onDragLeave={(event) => {
-                                                        if (
-                                                            !event.currentTarget.contains(
-                                                                event.relatedTarget
+                                                            }`}
+                                                        key={column._id}
+                                                        onDragOver={(event) =>
+                                                            handleDragOver(
+                                                                event,
+                                                                column._id
                                                             )
-                                                        ) {
-                                                            setDragOverColumnId(
-                                                                null
-                                                            );
                                                         }
-                                                    }}
-                                                >
-                                                    <div className="column-head">
-                                                        <div>
-                                                            <span
-                                                                className={`column-dot ${
-                                                                    column.name
+                                                        onDrop={(event) =>
+                                                            handleDrop(
+                                                                event,
+                                                                column._id
+                                                            )
+                                                        }
+                                                        onDragLeave={(event) => {
+                                                            if (
+                                                                !event.currentTarget.contains(
+                                                                    event.relatedTarget
+                                                                )
+                                                            ) {
+                                                                setDragOverColumnId(null);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <div className="column-head">
+                                                            <div>
+                                                                <span
+                                                                    className={`column-dot ${column.name
                                                                         ?.toLowerCase()
-                                                                        .includes(
-                                                                            "done"
-                                                                        )
+                                                                        .includes("done")
                                                                         ? "green"
                                                                         : column.name
-                                                                                ?.toLowerCase()
-                                                                                .includes(
-                                                                                    "progress"
-                                                                                )
-                                                                        ? "orange"
-                                                                        : "blue"
-                                                                }`}
-                                                            />
+                                                                            ?.toLowerCase()
+                                                                            .includes("progress")
+                                                                            ? "orange"
+                                                                            : "blue"
+                                                                        }`}
+                                                                />
 
-                                                            <h3>
-                                                                {column.name ||
-                                                                    column.title ||
-                                                                    "Untitled column"}
-                                                            </h3>
+                                                                <h3>
+                                                                    {column.name ||
+                                                                        column.title ||
+                                                                        "Untitled column"}
+                                                                </h3>
+                                                            </div>
+
+                                                            <div className="column-head-actions">
+                                                                <span className="count-pill">
+                                                                    {columnTasks.length}
+                                                                </span>
+
+                                                                <button
+                                                                    type="button"
+                                                                    className="add-column-task-button"
+                                                                    onClick={() =>
+                                                                        openTaskModal(
+                                                                            column._id
+                                                                        )
+                                                                    }
+                                                                    title={`Add task to ${column.name || "this column"
+                                                                        }`}
+                                                                >
+                                                                    + Add task
+                                                                </button>
+                                                            </div>
                                                         </div>
 
-                                                        <span className="count-pill">
-                                                            {
-                                                                tasksInColumn(
-                                                                    column._id
-                                                                ).length
-                                                            }
-                                                        </span>
-                                                    </div>
+                                                        <div className="task-stack">
+                                                            {columnTasks.map(
+                                                                renderTaskCard
+                                                            )}
 
-                                                    <div className="task-stack">
-                                                        {tasksInColumn(
-                                                            column._id
-                                                        ).map(renderTaskCard)}
-
-                                                        {tasksInColumn(
-                                                            column._id
-                                                        ).length === 0 && (
-                                                            <div className="empty-column">
-                                                                No tasks here yet
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </section>
-                                            ))}
+                                                            {columnTasks.length === 0 && (
+                                                                <div className="empty-column">
+                                                                    No tasks here yet
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </section>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                 </section>
@@ -1131,7 +1188,7 @@ export default function Dashboard() {
 
                         {/* MY TASKS VIEW */}
 
-                        {activeView === "myTasks" && (
+                        {/* {activeView === "myTasks" && (
                             <section className="board-panel">
                                 <div className="board-toolbar">
                                     <div>
@@ -1149,10 +1206,9 @@ export default function Dashboard() {
                                     <button
                                         className="primary-button compact"
                                         disabled={
-                                            !activeBoard ||
-                                            columns.length === 0
+                                            !activeBoard || columns.length === 0
                                         }
-                                        onClick={openTaskModal}
+                                        onClick={() => openTaskModal()}
                                     >
                                         ＋ Add task
                                     </button>
@@ -1186,9 +1242,7 @@ export default function Dashboard() {
                                             return (
                                                 <section
                                                     className={`kanban-column ${
-                                                        String(
-                                                            dragOverColumnId
-                                                        ) ===
+                                                        String(dragOverColumnId) ===
                                                         String(column._id)
                                                             ? "drag-over"
                                                             : ""
@@ -1212,9 +1266,7 @@ export default function Dashboard() {
                                                                 event.relatedTarget
                                                             )
                                                         ) {
-                                                            setDragOverColumnId(
-                                                                null
-                                                            );
+                                                            setDragOverColumnId(null);
                                                         }
                                                     }}
                                                 >
@@ -1225,9 +1277,26 @@ export default function Dashboard() {
                                                                 "Untitled column"}
                                                         </h3>
 
-                                                        <span className="count-pill">
-                                                            {columnTasks.length}
-                                                        </span>
+                                                        <div className="column-head-actions">
+                                                            <span className="count-pill">
+                                                                {columnTasks.length}
+                                                            </span>
+
+                                                            <button
+                                                                type="button"
+                                                                className="add-column-task-button"
+                                                                onClick={() =>
+                                                                    openTaskModal(
+                                                                        column._id
+                                                                    )
+                                                                }
+                                                                title={`Add task to ${
+                                                                    column.name || "this column"
+                                                                }`}
+                                                            >
+                                                                + Add task
+                                                            </button>
+                                                        </div>
                                                     </div>
 
                                                     <div className="task-stack">
@@ -1235,11 +1304,9 @@ export default function Dashboard() {
                                                             renderTaskCard
                                                         )}
 
-                                                        {columnTasks.length ===
-                                                            0 && (
+                                                        {columnTasks.length === 0 && (
                                                             <div className="empty-column">
-                                                                No assigned
-                                                                tasks
+                                                                No assigned tasks
                                                             </div>
                                                         )}
                                                     </div>
@@ -1247,6 +1314,111 @@ export default function Dashboard() {
                                             );
                                         })}
                                     </div>
+                                )}
+                            </section>
+                        )} */}
+
+                        {/* MY TASKS VIEW */}
+
+                        {activeView === "myTasks" && (
+                            <section className="board-panel">
+                                <div className="board-toolbar">
+                                    <div>
+                                        <p className="eyebrow">PERSONAL WORKSPACE</p>
+                                        <h2>My Tasks</h2>
+                                        <p className="muted">
+                                            Tasks assigned to your account.
+                                        </p>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        className="primary-button compact"
+                                        disabled={!activeBoard || columns.length === 0}
+                                        onClick={() => openTaskModal()}
+                                    >
+                                        + Add Task
+                                    </button>
+                                </div>
+
+                                {!activeBoard ? (
+                                    <div className="empty-state">
+                                        <h3>No board selected</h3>
+                                        <p>Select a board to view your tasks.</p>
+                                    </div>
+                                ) : columns.length === 0 ? (
+                                    <div className="empty-state">
+                                        <h3>No columns available</h3>
+                                        <p>This board does not have any columns yet.</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {myTasks.length === 0 && (
+                                            <p className="muted" style={{ marginBottom: "18px" }}>
+                                                No tasks are currently assigned to you.
+                                                You can still add tasks to any column.
+                                            </p>
+                                        )}
+
+                                        <div className="kanban-grid">
+                                            {columns.map((column) => {
+                                                const columnTasks = myTasks.filter((task) => {
+                                                    const columnId =
+                                                        task.columnId?._id ||
+                                                        task.columnId?.id ||
+                                                        task.columnId;
+
+                                                    return (
+                                                        String(columnId) ===
+                                                        String(column._id)
+                                                    );
+                                                });
+
+                                                return (
+                                                    <section
+                                                        className="kanban-column"
+                                                        key={column._id}
+                                                    >
+                                                        <div className="column-head">
+                                                            <div>
+                                                                <h3>
+                                                                    {column.name ||
+                                                                        column.title ||
+                                                                        "Untitled column"}
+                                                                </h3>
+                                                            </div>
+
+                                                            <div className="column-head-actions">
+                                                                <span className="count-pill">
+                                                                    {columnTasks.length}
+                                                                </span>
+
+                                                                <button
+                                                                    type="button"
+                                                                    className="add-column-task-button"
+                                                                    onClick={() =>
+                                                                        openTaskModal(column._id)
+                                                                    }
+                                                                >
+                                                                    + Add Task
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="task-stack">
+                                                            {columnTasks.length > 0 ? (
+                                                                columnTasks.map(renderTaskCard)
+                                                            ) : (
+                                                                <div className="empty-column">
+                                                                    No assigned tasks
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </section>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
                                 )}
                             </section>
                         )}
@@ -1276,6 +1448,67 @@ export default function Dashboard() {
                     </>
                 )}
             </main>
+
+            {/* CREATE WORKSPACE MODAL */}
+
+            {showWorkspaceModal && (
+                <Modal
+                    title="Create a workspace"
+                    onClose={closeWorkspaceModal}
+                >
+                    <form onSubmit={handleCreateWorkspace}>
+                        <label>Workspace name</label>
+
+                        <input
+                            type="text"
+                            value={workspaceName}
+                            onChange={(event) => {
+                                setWorkspaceName(event.target.value);
+                                setWorkspaceError("");
+                            }}
+                            placeholder="e.g. Marketing Team"
+                            maxLength={60}
+                            autoFocus
+                            required
+                        />
+
+                        {workspaceError && (
+                            <p className="alert error">
+                                {workspaceError}
+                            </p>
+                        )}
+
+                        <p className="muted">
+                            This workspace will be created inside your
+                            currently selected organization.
+                        </p>
+
+                        <div className="modal-actions">
+                            <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={closeWorkspaceModal}
+                                disabled={creatingWorkspace}
+                            >
+                                Cancel
+                            </button>
+
+                            <button
+                                type="submit"
+                                className="primary-button compact"
+                                disabled={
+                                    creatingWorkspace ||
+                                    !workspaceName.trim()
+                                }
+                            >
+                                {creatingWorkspace
+                                    ? "Creating..."
+                                    : "Create workspace"}
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
+            )}
 
             {/* CREATE BOARD MODAL */}
 
@@ -1449,14 +1682,32 @@ export default function Dashboard() {
                         >
                             <option value="">Unassigned</option>
 
-                            {members.map((member) => (
-                                <option
-                                    key={member._id}
-                                    value={member._id}
-                                >
-                                    {member.name} ({member.email})
-                                </option>
-                            ))}
+                            {members.map((member) => {
+                                const memberUser = member.userId || member.user || member;
+
+                                const memberUserId =
+                                    typeof memberUser === "object"
+                                        ? memberUser?._id || memberUser?.id
+                                        : memberUser;
+
+                                const memberName =
+                                    memberUser?.name ||
+                                    member.name ||
+                                    memberUser?.email ||
+                                    member.email ||
+                                    "Member";
+
+                                const memberEmail = memberUser?.email || member.email;
+
+                                if (!memberUserId) return null;
+
+                                return (
+                                    <option key={memberUserId} value={memberUserId}>
+                                        {memberName}
+                                        {memberEmail ? ` (${memberEmail})` : ""}
+                                    </option>
+                                );
+                            })}
                         </select>
 
                         <div className="modal-actions">
@@ -1481,8 +1732,8 @@ export default function Dashboard() {
                                 {mutationLoading
                                     ? "Saving..."
                                     : editingTask
-                                    ? "Update task"
-                                    : "Add task"}
+                                        ? "Update task"
+                                        : "Add task"}
                             </button>
                         </div>
                     </form>
@@ -1507,9 +1758,7 @@ export default function Dashboard() {
                         aria-labelledby="task-detail-heading"
                     >
                         <div className="modal-head">
-                            <h2 id="task-detail-heading">
-                                Task Details
-                            </h2>
+                            <h2 id="task-detail-heading">Task Details</h2>
 
                             <button
                                 type="button"
@@ -1552,7 +1801,7 @@ export default function Dashboard() {
                                             String(member._id) ===
                                             String(
                                                 selectedTask.assigneeId?._id ||
-                                                    selectedTask.assigneeId
+                                                selectedTask.assigneeId
                                             )
                                     )?.name ||
                                     "Unassigned"}
@@ -1563,8 +1812,8 @@ export default function Dashboard() {
                             <p>
                                 {selectedTask.createdAt
                                     ? new Date(
-                                          selectedTask.createdAt
-                                      ).toLocaleString()
+                                        selectedTask.createdAt
+                                    ).toLocaleString()
                                     : "Not available"}
                             </p>
 
@@ -1573,15 +1822,13 @@ export default function Dashboard() {
                             <p>
                                 {selectedTask.updatedAt
                                     ? new Date(
-                                          selectedTask.updatedAt
-                                      ).toLocaleString()
+                                        selectedTask.updatedAt
+                                    ).toLocaleString()
                                     : "Not available"}
                             </p>
 
                             <p className="eyebrow">VERSION</p>
-                            <p>
-                                {selectedTask.version ?? "Not available"}
-                            </p>
+                            <p>{selectedTask.version ?? "Not available"}</p>
 
                             <div className="modal-actions">
                                 <button
@@ -1595,9 +1842,7 @@ export default function Dashboard() {
                                 <button
                                     type="button"
                                     className="primary-button compact"
-                                    onClick={() =>
-                                        openEditTask(selectedTask)
-                                    }
+                                    onClick={() => openEditTask(selectedTask)}
                                 >
                                     Edit task
                                 </button>

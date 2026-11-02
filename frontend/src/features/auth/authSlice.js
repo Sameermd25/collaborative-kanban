@@ -1,3 +1,4 @@
+
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import api from "../../services/api";
 
@@ -9,6 +10,7 @@ const getDefaultTenantId = (memberships) => {
         : firstTenant || "";
 };
 
+// Login
 export const loginUser = createAsyncThunk(
     "auth/login",
     async (credentials, { rejectWithValue }) => {
@@ -40,12 +42,9 @@ export const loginUser = createAsyncThunk(
                 : getDefaultTenantId(memberships);
 
             if (activeTenantId) {
-                // localStorage.setItem("activeTenantId", activeTenantId);
-                if (activeTenantId) {
-                    localStorage.setItem("activeTenantId", activeTenantId);
-                } else {
-                    localStorage.removeItem("activeTenantId");
-                }
+                localStorage.setItem("activeTenantId", activeTenantId);
+            } else {
+                localStorage.removeItem("activeTenantId");
             }
 
             localStorage.setItem("token", token);
@@ -61,6 +60,7 @@ export const loginUser = createAsyncThunk(
     }
 );
 
+// Register
 export const registerUser = createAsyncThunk(
     "auth/register",
     async (formData, { rejectWithValue }) => {
@@ -88,15 +88,67 @@ export const registerUser = createAsyncThunk(
             if (token) localStorage.setItem("token", token);
             if (user) localStorage.setItem("user", JSON.stringify(user));
 
-            localStorage.setItem(
-                "memberships",
-                JSON.stringify(memberships)
-            );
+            localStorage.setItem("memberships", JSON.stringify(memberships));
 
             return { token, user, memberships, activeTenantId };
         } catch (error) {
             return rejectWithValue(
                 error.response?.data?.message || "Registration failed."
+            );
+        }
+    }
+);
+
+// Create workspace (tenant)
+export const createTenant = createAsyncThunk(
+    "auth/createTenant",
+    async ({ organizationId, name }, { rejectWithValue, getState }) => {
+        try {
+            const response = await api.post("/tenants", {
+                organizationId,
+                name: name.trim(),
+            });
+
+            const data = response.data;
+            const tenant = data.tenant || data.data?.tenant;
+
+            if (!tenant?._id) {
+                return rejectWithValue(
+                    "Workspace was created, but its details were not returned."
+                );
+            }
+
+            const newMembership = {
+                tenantId: tenant,
+                organizationId: tenant.organizationId || organizationId,
+                role: "org_admin",
+                isActive: true,
+            };
+
+            const existingMemberships = getState().auth.memberships || [];
+
+            const updatedMemberships = [
+                ...existingMemberships,
+                newMembership,
+            ];
+
+            localStorage.setItem(
+                "memberships",
+                JSON.stringify(updatedMemberships)
+            );
+
+            localStorage.setItem("activeTenantId", tenant._id);
+
+            return {
+                tenant,
+                membership: newMembership,
+                memberships: updatedMemberships,
+                activeTenantId: tenant._id,
+            };
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message ||
+                "Failed to create workspace."
             );
         }
     }
@@ -129,6 +181,7 @@ const authSlice = createSlice({
             state.activeTenantId = null;
             localStorage.removeItem("activeTenantId");
         },
+
         setActiveTenant: (state, action) => {
             state.activeTenantId = action.payload;
 
@@ -146,6 +199,7 @@ const authSlice = createSlice({
 
     extraReducers: (builder) => {
         builder
+            // Login
             .addCase(loginUser.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -162,6 +216,7 @@ const authSlice = createSlice({
                 state.error = action.payload;
             })
 
+            // Register
             .addCase(registerUser.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -176,10 +231,29 @@ const authSlice = createSlice({
             .addCase(registerUser.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
+            })
+
+            // Create workspace
+            .addCase(createTenant.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(createTenant.fulfilled, (state, action) => {
+                state.loading = false;
+                state.memberships = action.payload.memberships;
+                state.activeTenantId = action.payload.activeTenantId;
+            })
+            .addCase(createTenant.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
             });
     },
 });
 
-export const { logout, clearAuthError, setActiveTenant } = authSlice.actions;
+export const {
+    logout,
+    clearAuthError,
+    setActiveTenant,
+} = authSlice.actions;
 
 export default authSlice.reducer;

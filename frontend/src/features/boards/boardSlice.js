@@ -440,7 +440,11 @@ const boardSlice = createSlice({
 
             // FETCH BOARDS
             .addCase(fetchBoards.pending, (state) => {
-                state.loading = true;
+                // Show the initial loader only when there are no boards yet.
+                if (state.boards.length === 0) {
+                    state.loading = true;
+                }
+
                 state.error = null;
             })
             .addCase(fetchBoards.fulfilled, (state, action) => {
@@ -467,7 +471,12 @@ const boardSlice = createSlice({
 
             // FETCH BOARD DETAILS
             .addCase(fetchBoardDetails.pending, (state) => {
-                state.loading = true;
+                // Do not hide the existing dashboard during background refreshes.
+                // Show loading only when no board has been loaded yet.
+                if (!state.activeBoard) {
+                    state.loading = true;
+                }
+
                 state.error = null;
             })
             .addCase(fetchBoardDetails.fulfilled, (state, action) => {

@@ -1275,3 +1275,182 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
         max-width: 48%;
     }
 }
+
+
+
+/* Workspace creation button */
+
+.create-workspace-button {
+    white-space: nowrap;
+}
+
+/* Column header actions */
+
+.column-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.add-column-task-button {
+    border: 1px solid var(--border-color, #dfe3eb);
+    background: transparent;
+    color: var(--text-primary, inherit);
+    padding: 5px 9px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.add-column-task-button:hover {
+    background: var(--surface-hover, rgba(128, 128, 128, 0.12));
+    border-color: var(--accent-color, #6366f1);
+}
+
+@media (max-width: 900px) {
+    .workspace-switchers {
+        flex-wrap: wrap;
+    }
+
+    .create-workspace-button {
+        width: 100%;
+    }
+}
+
+
+.column-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+}
+
+.column-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.add-column-task-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    visibility: visible;
+    opacity: 1;
+    border: 1px solid var(--border-color, #dfe3eb);
+    background: transparent;
+    color: var(--text-primary, inherit);
+    padding: 6px 9px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.add-column-task-button:hover {
+    background: var(--surface-hover, rgba(128, 128, 128, 0.12));
+}
+
+.kanban-column {
+    min-width: 0;
+}
+
+.column-head > div:first-child {
+    min-width: 0;
+}
+
+
+/* =========================================================
+   KANBAN COLUMN HEADER + ADD TASK BUTTON FIX
+   ========================================================= */
+
+.kanban-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(280px, 1fr));
+    gap: 15px;
+    align-items: start;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+
+.kanban-column {
+    min-width: 280px;
+    width: 100%;
+    overflow: visible;
+}
+
+.column-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    padding: 2px 2px 14px;
+}
+
+.column-head > div:first-child {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+}
+
+.column-head-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-shrink: 0;
+    visibility: visible;
+}
+
+.add-column-task-button {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: relative;
+    z-index: 2;
+
+    padding: 7px 10px;
+    min-height: 30px;
+
+    border: 1px solid var(--primary);
+    border-radius: 8px;
+
+    background: var(--primary-soft);
+    color: var(--primary);
+
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.add-column-task-button:hover {
+    background: var(--primary);
+    color: #fff;
+}
+
+@media (max-width: 1000px) {
+    .kanban-grid {
+        grid-template-columns: repeat(3, 280px);
+    }
+}
+
+@media (max-width: 650px) {
+    .kanban-grid {
+        grid-template-columns: repeat(3, 270px);
+    }
+}
