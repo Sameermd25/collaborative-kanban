@@ -148,7 +148,7 @@ The database design consists of the following entities:
 
 The logical database relationships are represented below.
 
-![KanbanFlow ER Diagram](docs/er-diagram.png)
+![KanbanFlow ER Diagram](mermaid-diagram.png)
 
 **Hierarchy:**
 
